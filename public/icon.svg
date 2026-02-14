@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#1a1a2e"/>
+  <rect x="40" y="40" width="432" height="432" rx="48" fill="#16213e"/>
+  <g transform="translate(256,240)">
+    <circle r="120" fill="none" stroke="#e94560" stroke-width="12"/>
+    <path d="M-40,-60 L-40,40 L40,-10 Z" fill="#e94560"/>
+  </g>
+  <rect x="120" y="400" width="272" height="8" rx="4" fill="#e94560" opacity="0.6"/>
+  <rect x="160" y="420" width="192" height="6" rx="3" fill="#e94560" opacity="0.3"/>
+  <text x="256" y="200" text-anchor="middle" font-family="Arial" font-weight="bold" font-size="48" fill="#eee">JR</text>
+</svg>
