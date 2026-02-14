@@ -1,15 +1,36 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { getAllEntries, saveReport, getAllReports, getReport } from '../db'
-import { generateWeeklyReport, formatDate } from '../utils'
-import type { WeeklyReport } from '../types'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { getAllEntries, saveReport, getAllReports, getReport, getAIOutputsForKey } from '../db'
+import { generateWeeklyReport, formatDate, getWeekId, getMonday } from '../utils'
+import { hasApiKey, aiWeeklyInsight, aiWeeklyCompare, aiWeeklyExperiments } from '../ai'
+import type { WeeklyReport, AIOutput } from '../types'
+
+function useOnline() {
+  const [online, setOnline] = useState(navigator.onLine)
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+  return online
+}
 
 function ReportsPage() {
   const { id: paramId } = useParams<{ id?: string }>()
   const navigate = useNavigate()
+  const isOnline = useOnline()
   const [reports, setReports] = useState<WeeklyReport[]>([])
   const [activeReport, setActiveReport] = useState<WeeklyReport | null>(null)
   const [generating, setGenerating] = useState(false)
+
+  // AI state
+  const [aiResults, setAiResults] = useState<Record<string, AIOutput>>({})
+  const [loading, setLoading] = useState<Record<string, boolean>>({})
+  const [aiError, setAiError] = useState<Record<string, string>>({})
+
+  const canUseAI = isOnline && hasApiKey() && !!activeReport
 
   useEffect(() => {
     loadReports()
@@ -18,16 +39,30 @@ function ReportsPage() {
   useEffect(() => {
     if (paramId) {
       getReport(paramId).then(r => {
-        if (r) setActiveReport(r)
+        if (r) {
+          setActiveReport(r)
+          loadAIOutputs(r.id)
+        }
       })
     } else {
       setActiveReport(null)
+      setAiResults({})
+      setAiError({})
     }
   }, [paramId])
 
   const loadReports = async () => {
     const all = await getAllReports()
     setReports(all.sort((a, b) => b.id.localeCompare(a.id)))
+  }
+
+  const loadAIOutputs = async (weekId: string) => {
+    const outputs = await getAIOutputsForKey(weekId)
+    const results: Record<string, AIOutput> = {}
+    for (const o of outputs) {
+      results[o.type] = o
+    }
+    setAiResults(results)
   }
 
   const generateThisWeek = async () => {
@@ -52,6 +87,48 @@ function ReportsPage() {
     await loadReports()
     setGenerating(false)
     navigate(`/reports/${report.id}`, { replace: true })
+  }
+
+  // AI handlers
+  const runAI = async (type: string, fn: () => Promise<AIOutput>) => {
+    setLoading(prev => ({ ...prev, [type]: true }))
+    setAiError(prev => ({ ...prev, [type]: '' }))
+    try {
+      const result = await fn()
+      setAiResults(prev => ({ ...prev, [type]: result }))
+    } catch (e) {
+      setAiError(prev => ({ ...prev, [type]: e instanceof Error ? e.message : 'Unknown error' }))
+    } finally {
+      setLoading(prev => ({ ...prev, [type]: false }))
+    }
+  }
+
+  const handleWeeklyInsight = async () => {
+    if (!activeReport) return
+    const entries = await getAllEntries()
+    runAI('weekly-insight', () => aiWeeklyInsight(activeReport, entries))
+  }
+
+  const handleWeeklyCompare = async () => {
+    if (!activeReport) return
+    // Find previous week's report
+    const monday = getMonday(new Date(activeReport.weekStart + 'T00:00:00'))
+    const prevMonday = new Date(monday)
+    prevMonday.setDate(prevMonday.getDate() - 7)
+    const prevWeekId = getWeekId(prevMonday)
+    const prevReport = await getReport(prevWeekId)
+    if (!prevReport) {
+      setAiError(prev => ({ ...prev, 'weekly-compare': 'No report found for previous week. Generate it first.' }))
+      return
+    }
+    const entries = await getAllEntries()
+    runAI('weekly-compare', () => aiWeeklyCompare(activeReport, prevReport, entries, entries))
+  }
+
+  const handleWeeklyExperiments = async () => {
+    if (!activeReport) return
+    const entries = await getAllEntries()
+    runAI('weekly-experiments', () => aiWeeklyExperiments(activeReport, entries))
   }
 
   if (activeReport) {
@@ -148,6 +225,67 @@ function ReportsPage() {
             </p>
           </div>
         )}
+
+        {/* AI Analysis Section */}
+        <div className="ai-section">
+          <h2 className="ai-section-title">AI Analysis</h2>
+
+          {!isOnline && <p className="ai-status-msg">Requires internet connection</p>}
+          {isOnline && !hasApiKey() && (
+            <p className="ai-status-msg">
+              <Link to="/settings" style={{ color: 'var(--accent-light)' }}>Configure your API key</Link> to unlock AI features
+            </p>
+          )}
+
+          <div className="ai-buttons">
+            <button
+              className="ai-btn ai-btn-wide"
+              onClick={handleWeeklyInsight}
+              disabled={!canUseAI || loading['weekly-insight']}
+            >
+              {loading['weekly-insight'] ? 'Generating...' : aiResults['weekly-insight'] ? 'Regenerate Weekly Insight' : 'Generate Weekly Insight'}
+            </button>
+            <button
+              className="ai-btn"
+              onClick={handleWeeklyCompare}
+              disabled={!canUseAI || loading['weekly-compare']}
+            >
+              {loading['weekly-compare'] ? 'Comparing...' : aiResults['weekly-compare'] ? 'Re-compare' : 'What Changed vs Last Week?'}
+            </button>
+            <button
+              className="ai-btn"
+              onClick={handleWeeklyExperiments}
+              disabled={!canUseAI || loading['weekly-experiments']}
+            >
+              {loading['weekly-experiments'] ? 'Thinking...' : aiResults['weekly-experiments'] ? 'New Experiments' : 'Pick Next Week Experiments'}
+            </button>
+          </div>
+
+          {/* AI Results */}
+          {aiResults['weekly-insight'] && (
+            <div className="ai-result ai-result-long">
+              <h3>Weekly Chapter</h3>
+              <div className="ai-content-formatted">{aiResults['weekly-insight'].content}</div>
+            </div>
+          )}
+          {aiError['weekly-insight'] && <div className="ai-error">{aiError['weekly-insight']}</div>}
+
+          {aiResults['weekly-compare'] && (
+            <div className="ai-result">
+              <h3>Week-over-Week</h3>
+              <div className="ai-content-formatted">{aiResults['weekly-compare'].content}</div>
+            </div>
+          )}
+          {aiError['weekly-compare'] && <div className="ai-error">{aiError['weekly-compare']}</div>}
+
+          {aiResults['weekly-experiments'] && (
+            <div className="ai-result">
+              <h3>Suggested Experiments</h3>
+              <div className="ai-content-formatted">{aiResults['weekly-experiments'].content}</div>
+            </div>
+          )}
+          {aiError['weekly-experiments'] && <div className="ai-error">{aiError['weekly-experiments']}</div>}
+        </div>
       </div>
     )
   }

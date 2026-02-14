@@ -26,3 +26,31 @@ export interface WeeklyReport {
   streak: number;
   createdAt: number;
 }
+
+// AI feature types
+
+export type AIOutputType =
+  | 'reflect'
+  | 'name-the-day'
+  | 'coach'
+  | 'extract-actions'
+  | 'ask'
+  | 'weekly-insight'
+  | 'weekly-compare'
+  | 'weekly-experiments';
+
+export interface AIOutput {
+  id: string; // "type:date" or "type:weekId" or "ask:date:timestamp"
+  type: AIOutputType;
+  sourceKey: string; // date (YYYY-MM-DD) or weekId (YYYY-Www)
+  content: string;
+  query?: string; // for "ask" type
+  createdAt: number;
+}
+
+export interface AISettings {
+  provider: 'anthropic' | 'openai';
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+}
